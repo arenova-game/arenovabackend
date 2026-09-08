@@ -11,16 +11,25 @@ async function bootstrap() {
   // --- CONFIGURATION SWAGGER ---
   const config = new DocumentBuilder()
     .setTitle('ARENOVA API')
-    .setDescription('Documentation officielle de la plateforme e-sport Arenova')
+    .setDescription('Documentation officielle de la plateforme e-sport Arenova. Cette API gère le matchmaking, le portefeuille OVA, les preuves de victoire et les tournois.')
     .setVersion('1.0')
-    .addBearerAuth() // Pour les routes sécurisées avec JWT Supabase
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+      name: 'JWT',
+      description: 'Entrez votre token Supabase',
+      in: 'header',
+    }, 'JWT-auth') // Changé le nom pour être plus explicite
     .build();
     
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document, {
-    customSiteTitle: 'Arenova API Docs',
+    customSiteTitle: 'Arenova API Documentation',
     swaggerOptions: {
       persistAuthorization: true,
+      displayRequestDuration: true,
+      filter: true,
     },
   });
 

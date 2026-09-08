@@ -3,7 +3,7 @@ import { AuthGuard } from './auth.guard';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 
 @ApiTags('Auth')
-@ApiBearerAuth()
+@ApiBearerAuth('JWT-auth')
 @Controller('auth')
 export class AuthController {
   @UseGuards(AuthGuard)

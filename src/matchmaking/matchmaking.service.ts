@@ -1,11 +1,18 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class MatchmakingService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly walletService: WalletService
+  ) {}
 
   async joinAutoMatchmaking(gameId: string, userId: string, betAmount: number) {
+    // 0. Hold Escrow first
+    await this.walletService.holdEscrow(userId, betAmount);
+
     const client = this.supabase.getClient();
 
     // 1. Chercher une room "auto" en attente avec la même mise
@@ -59,6 +66,9 @@ export class MatchmakingService {
   }
 
   async createFriendRoom(gameId: string, userId: string, betAmount: number, isExternal = false, playerPseudo?: string) {
+    // 0. Hold Escrow
+    await this.walletService.holdEscrow(userId, betAmount);
+
     const entryCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     const { data, error } = await this.supabase.getClient()
@@ -111,6 +121,9 @@ export class MatchmakingService {
     if (room.player2_id) throw new BadRequestException('Partie complète');
     if (room.player1_id === userId) return room;
 
+    // 0. Hold Escrow for player 2
+    await this.walletService.holdEscrow(userId, room.bet_amount);
+
     const { data: updatedRoom } = await client
       .from('game_rooms')
       .update({ 
@@ -154,20 +167,16 @@ export class MatchmakingService {
       winner_id: winnerId
     }).eq('id', roomId);
 
-    // 4. Créditer le gagnant
-    if (winnerId) {
-      await client.rpc('increment_wallet_balance', { 
-        user_id_param: winnerId, 
-        amount_param: winAmount 
-      });
+    // 4. Créditer le gagnant et consommer les séquestres
+    const loserId = room.player1_id === winnerId ? room.player2_id : room.player1_id;
 
-      // Log transaction
-      await client.from('transactions').insert({
-        user_id: winnerId,
-        amount: winAmount,
-        type: 'win',
-        status: 'completed'
-      });
+    if (winnerId) {
+      await this.walletService.creditWinner(winnerId, winAmount, roomId);
+      await this.walletService.consumeEscrowOnMatchEnd(winnerId, room.bet_amount); // Consomme son propre séquestre
+    }
+
+    if (loserId) {
+      await this.walletService.consumeEscrowOnMatchEnd(loserId, room.bet_amount); // Consomme le séquestre du perdant
     }
 
     return { message: 'Match terminé', winnerId, winAmount };
@@ -189,14 +198,25 @@ export class MatchmakingService {
   }
 
   async cancelSearch(roomId: string, userId: string) {
-    const { error } = await this.supabase.getClient()
+    const client = this.supabase.getClient();
+    const { data: room } = await client
       .from('game_rooms')
-      .update({ status: 'annuler' })
+      .select('*')
       .eq('id', roomId)
-      .eq('player1_id', userId)
-      .eq('status', 'waiting');
+      .single();
+
+    if (room && room.status === 'waiting') {
+      await this.walletService.releaseEscrow(userId, room.bet_amount);
+
+      const { error } = await client
+        .from('game_rooms')
+        .update({ status: 'annuler' })
+        .eq('id', roomId)
+        .eq('player1_id', userId);
+
+      if (error) throw error;
+    }
     
-    if (error) throw error;
     return { message: 'Recherche annulée' };
   }
 }

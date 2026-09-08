@@ -4,7 +4,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 
 @ApiTags('Matchmaking')
-@ApiBearerAuth()
+@ApiBearerAuth('JWT-auth')
 @Controller('matchmaking')
 @UseGuards(AuthGuard)
 export class MatchmakingController {

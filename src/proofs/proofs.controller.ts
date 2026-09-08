@@ -5,7 +5,7 @@ import { Roles } from '../auth/roles.decorator';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 
 @ApiTags('Proofs')
-@ApiBearerAuth()
+@ApiBearerAuth('JWT-auth')
 @Controller('proofs')
 @UseGuards(AuthGuard)
 export class ProofsController {
