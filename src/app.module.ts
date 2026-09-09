@@ -14,6 +14,10 @@ import { ChatModule } from './chat/chat.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { SettingsModule } from './settings/settings.module';
 
+import { RoomsModule } from './rooms/rooms.module';
+import { AdminModule } from './admin/admin.module';
+import { PaymentsModule } from './payments/payments.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -26,6 +30,9 @@ import { SettingsModule } from './settings/settings.module';
     TournamentsModule,
     WalletModule,
     MatchmakingModule,
+    RoomsModule,
+    AdminModule,
+    PaymentsModule,
     ProofsModule,
     NotificationsModule,
     FriendsModule,

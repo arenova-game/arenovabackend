@@ -13,191 +13,140 @@ export class WalletService {
       .eq('id', userId)
       .single();
 
-    if (error) throw error;
+    if (error) throw new NotFoundException('Profil introuvable');
     return {
-      balance: data.ova_balance || 0,
-      escrow: data.ova_escrow || 0,
+      ova_balance: data.ova_balance || 0,
+      ova_escrow: data.ova_escrow || 0,
     };
   }
 
   async holdEscrow(userId: string, amount: number) {
-    // 1. Vérifier le solde
-    const { data: profile, error: fetchError } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .select('ova_balance, ova_escrow')
-      .eq('id', userId)
-      .single();
+    const client = this.supabase.getClient();
 
-    if (fetchError || !profile) throw new NotFoundException('Utilisateur introuvable');
-    if (profile.ova_balance < amount) {
-      throw new BadRequestException('Solde OVA insuffisant');
+    // Appel de la fonction RPC atomique PostgreSQL
+    const { error } = await client.rpc('fn_hold_escrow', {
+      p_user_id: userId,
+      p_amount: amount
+    });
+
+    if (error) {
+      throw new BadRequestException(error.message || 'Solde OVA insuffisant pour verrouiller l\'escrow');
     }
 
-    // 2. Transaction atomique (Mise à jour des balances)
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .update({
-        ova_balance: profile.ova_balance - amount,
-        ova_escrow: (profile.ova_escrow || 0) + amount,
-      })
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // 3. Log de la transaction
-    await this.supabase.getClient().from('transactions').insert({
+    // Enregistrement de la transaction
+    await client.from('transactions').insert({
       user_id: userId,
-      amount: -amount,
+      amount_fcfa: 0,
+      amount_ova: amount,
       type: 'ESCROW_LOCK',
-      status: 'completed',
+      status: 'SUCCESS',
       created_at: new Date().toISOString(),
     });
 
-    return { balance: data.ova_balance, escrow: data.ova_escrow };
+    return this.getBalance(userId);
   }
 
   async releaseEscrow(userId: string, amount: number) {
-    const { data: profile, error: fetchError } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .select('ova_balance, ova_escrow')
-      .eq('id', userId)
-      .single();
+    const client = this.supabase.getClient();
+    const { error } = await client.rpc('fn_release_escrow', {
+      p_user_id: userId,
+      p_amount: amount
+    });
 
-    if (fetchError || !profile) throw new NotFoundException('Utilisateur introuvable');
+    if (error) throw new BadRequestException(error.message);
 
-    const newEscrow = Math.max(0, (profile.ova_escrow || 0) - amount);
-
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .update({
-        ova_balance: profile.ova_balance + amount,
-        ova_escrow: newEscrow,
-      })
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    await this.supabase.getClient().from('transactions').insert({
+    await client.from('transactions').insert({
       user_id: userId,
-      amount: amount,
+      amount_fcfa: 0,
+      amount_ova: amount,
       type: 'ESCROW_RELEASE',
-      status: 'completed',
+      status: 'SUCCESS',
       created_at: new Date().toISOString(),
     });
 
-    return { balance: data.ova_balance, escrow: data.ova_escrow };
+    return this.getBalance(userId);
   }
 
   async creditWinner(winnerId: string, prizePoolAmount: number, roomId: string) {
-    const { data: profile, error: fetchError } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .select('ova_balance')
-      .eq('id', winnerId)
-      .single();
+    const client = this.supabase.getClient();
+    const { error } = await client.rpc('fn_credit_winner', {
+      p_winner_id: winnerId,
+      p_amount: prizePoolAmount
+    });
 
-    if (fetchError || !profile) throw new NotFoundException('Gagnant introuvable');
+    if (error) throw new BadRequestException(error.message);
 
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .update({
-        ova_balance: profile.ova_balance + prizePoolAmount,
-      })
-      .eq('id', winnerId)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    await this.supabase.getClient().from('transactions').insert({
+    await client.from('transactions').insert({
       user_id: winnerId,
-      amount: prizePoolAmount,
+      amount_fcfa: 0,
+      amount_ova: prizePoolAmount,
       type: 'MATCH_WIN_PAYOUT',
-      status: 'completed',
-      reference_id: roomId,
+      status: 'SUCCESS',
+      payment_reference: roomId,
       created_at: new Date().toISOString(),
     });
 
-    return { balance: data.ova_balance };
+    return this.getBalance(winnerId);
   }
 
   async consumeEscrowOnMatchEnd(loserId: string, amount: number) {
-    const { data: profile, error: fetchError } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .select('ova_escrow')
-      .eq('id', loserId)
-      .single();
+    const client = this.supabase.getClient();
+    const { error } = await client.rpc('fn_consume_escrow', {
+      p_user_id: loserId,
+      p_amount: amount
+    });
 
-    if (fetchError || !profile) throw new NotFoundException('Perdant introuvable');
-
-    const newEscrow = Math.max(0, (profile.ova_escrow || 0) - amount);
-
-    const { error } = await this.supabase
-      .getClient()
-      .from('profiles')
-      .update({
-        ova_escrow: newEscrow,
-      })
-      .eq('id', loserId);
-
-    if (error) throw error;
+    if (error) throw new BadRequestException(error.message);
 
     return { success: true };
   }
 
-  async deposit(userId: string, amount: number) {
-    if (amount <= 0) throw new BadRequestException('Amount must be positive');
-
-    const { data, error } = await this.supabase
-      .getClient()
-      .rpc('increment_wallet_balance', { 
-        user_id_param: userId, 
-        amount_param: amount 
-      });
-
-    if (error) throw error;
-
-    // Log the transaction
-    await this.supabase.getClient().from('transactions').insert({
-      user_id: userId,
-      amount: amount,
-      type: 'deposit',
-      status: 'completed'
+  async creditDeposit(userId: string, amountOva: number) {
+    const client = this.supabase.getClient();
+    const { data, error } = await client.rpc('fn_credit_winner', {
+      p_winner_id: userId,
+      p_amount: amountOva
     });
-
+    if (error) throw error;
     return data;
   }
 
-  // NOUVEAU : Ajustement admin (Backoffice)
+  async deductForWithdrawal(userId: string, amountOva: number) {
+    const client = this.supabase.getClient();
+    // On peut réutiliser fn_hold_escrow ou créer une fonction dédiée,
+    // mais ici on va simplement déduire du balance.
+    const { data: profile } = await this.getBalance(userId);
+    if (profile.ova_balance < amountOva) {
+      throw new BadRequestException('Solde OVA insuffisant');
+    }
+
+    const { error } = await client
+      .from('profiles')
+      .update({ ova_balance: profile.ova_balance - amountOva })
+      .eq('id', userId);
+
+    if (error) throw error;
+    return { success: true };
+  }
+
   async adminAdjustBalance(userId: string, amount: number, reason: string) {
-    const { data, error } = await this.supabase
-      .getClient()
-      .rpc('increment_wallet_balance', { 
-        user_id_param: userId, 
-        amount_param: amount 
-      });
+    const client = this.supabase.getClient();
+    const { error } = await client.rpc(amount > 0 ? 'fn_credit_winner' : 'fn_consume_escrow', {
+      [amount > 0 ? 'p_winner_id' : 'p_user_id']: userId,
+      p_amount: Math.abs(amount)
+    });
 
     if (error) throw error;
 
-    // Log the transaction
-    await this.supabase.getClient().from('transactions').insert({
+    await client.from('transactions').insert({
       user_id: userId,
-      amount: amount,
-      type: amount > 0 ? 'win' : 'entry_fee', // Simplifié pour le log
-      status: 'completed',
-      // metadata: { reason } // Optionnel si vous ajoutez une colonne metadata
+      amount_fcfa: 0,
+      amount_ova: amount,
+      type: amount > 0 ? 'DEPOSIT' : 'WITHDRAWAL',
+      status: 'SUCCESS',
+      created_at: new Date().toISOString(),
     });
 
-    return { success: true, newBalance: data };
+    return this.getBalance(userId);
   }
 }
