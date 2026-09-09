@@ -17,6 +17,7 @@ import { SettingsModule } from './settings/settings.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { AdminModule } from './admin/admin.module';
 import { PaymentsModule } from './payments/payments.module';
+import { KycModule } from './kyc/kyc.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PaymentsModule } from './payments/payments.module';
     RoomsModule,
     AdminModule,
     PaymentsModule,
+    KycModule,
     ProofsModule,
     NotificationsModule,
     FriendsModule,
