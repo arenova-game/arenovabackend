@@ -113,9 +113,8 @@ export class WalletService {
 
   async deductForWithdrawal(userId: string, amountOva: number) {
     const client = this.supabase.getClient();
-    // On peut réutiliser fn_hold_escrow ou créer une fonction dédiée,
-    // mais ici on va simplement déduire du balance.
-    const { data: profile } = await this.getBalance(userId);
+    // On récupère le solde directement
+    const profile = await this.getBalance(userId);
     if (profile.ova_balance < amountOva) {
       throw new BadRequestException('Solde OVA insuffisant');
     }
