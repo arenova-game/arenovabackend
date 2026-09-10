@@ -101,4 +101,78 @@ export class MatchmakingService {
     if (error) throw error;
     return { success: true };
   }
+
+  // --- MATCHMAKING AMIS ---
+
+  async createFriendRoom(userId: string, gameId: string, betAmount: number) {
+    const client = this.supabase.getClient();
+    const entryCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+    const { data: room, error } = await client.from(\u0027game_rooms\u0027).insert({
+      game_id: gameId,
+      player1_id: userId,
+      stake_amount: betAmount,
+      status: \u0027WAITING\u0027,
+      entry_code: entryCode, // Assurez-vous que cette colonne existe
+    }).select().single();
+
+    if (error) throw error;
+    return room;
+  }
+
+  async verifyFriendCode(entryCode: string) {
+    const client = this.supabase.getClient();
+    const { data: room, error } = await client
+      .from(\u0027game_rooms\u0027)
+      .select(\u0027*, p1:profiles!player1_id(username)\u0027)
+      .eq(\u0027entry_code\u0027, entryCode)
+      .eq(\u0027status\u0027, \u0027WAITING\u0027)
+      .maybeSingle();
+
+    if (error || !room) throw new NotFoundException(\u0027Code invalide ou partie déjà commencée\u0027);
+
+    return {
+      ...room,
+      isFull: room.player2_id != null,
+      playerCount: room.player2_id ? 2 : 1
+    };
+  }
+
+  async joinFriendRoom(userId: string, entryCode: string) {
+    const client = this.supabase.getClient();
+
+    // 1. Trouver la room
+    const { data: room } = await client
+      .from(\u0027game_rooms\u0027)
+      .select(\u0027*\u0027)
+      .eq(\u0027entry_code\u0027, entryCode)
+      .eq(\u0027status\u0027, \u0027WAITING\u0027)
+      .single();
+
+    if (!room) throw new NotFoundException(\u0027Partie introuvable\u0027);
+    if (room.player1_id === userId) throw new BadRequestException(\u0027Vous êtes déjà dans cette partie\u0027);
+
+    // 2. Vérifier solde
+    const balance = await this.walletService.getBalance(userId);
+    if (balance.ova_balance < room.stake_amount) {
+      throw new BadRequestException(\u0027Solde insuffisant\u0027);
+    }
+
+    // 3. Bloquer fonds et rejoindre
+    await this.walletService.holdEscrow(userId, room.stake_amount);
+    await this.walletService.holdEscrow(room.player1_id, room.stake_amount);
+
+    const { data: updatedRoom, error } = await client
+      .from(\u0027game_rooms\u0027)
+      .update({
+        player2_id: userId,
+        status: \u0027IN_PROGRESS\u0027,
+      })
+      .eq(\u0027id\u0027, room.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return updatedRoom;
+  }
 }
